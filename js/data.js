@@ -24,9 +24,7 @@ RecoveryLog.Data = (() => {
             settings: {
                 lossWon: null,
                 plan: {
-                    morning: 20000,
-                    afternoon: 20000,
-                    weekdays: [1, 2, 3, 4, 5],
+                    daily: 40000,
                     start: C.addDays(C.today(), 1),
                     deadline: null
                 }
@@ -56,7 +54,7 @@ RecoveryLog.Data = (() => {
         return value.trim();
     }
 
-    function storedWon(value, nullable = false) {
+    function storedWon(value, nullable = false, maximum = C.MAX_WON) {
         if (nullable && value === null) {
             return null;
         }
@@ -64,7 +62,7 @@ RecoveryLog.Data = (() => {
         if (typeof value !== "number" ||
             !Number.isSafeInteger(value) ||
             value < 0 ||
-            value > C.MAX_WON) {
+            value > maximum) {
             throw new Error("저장된 원화 금액을 확인하세요.");
         }
 
@@ -72,20 +70,85 @@ RecoveryLog.Data = (() => {
     }
 
     function deliveryRecord(raw) {
-        object(raw, "배달 기록");
+        object(raw, "수입 기록");
 
-        const morning = storedWon(raw.morning, true);
-        const afternoon = storedWon(raw.afternoon, true);
+        const hasOwn = key =>
+            Object.prototype.hasOwnProperty.call(raw, key);
 
-        if (morning === null && afternoon === null) {
-            throw new Error("배달 기록에는 오전·오후 중 하나 이상의 금액이 필요합니다.");
+        const isLegacy =
+            raw.mode === undefined &&
+            hasOwn("morning") &&
+            hasOwn("afternoon");
+
+        if (isLegacy) {
+            const morning = storedWon(raw.morning, true);
+            const afternoon = storedWon(raw.afternoon, true);
+
+            if (morning === null && afternoon === null) {
+                throw new Error("기존 배달 기록에 수입이 없습니다.");
+            }
+
+            return {
+                mode: "combined",
+                coupang: null,
+                baemin: null,
+                combined: C.safe(
+                    (morning ?? 0) + (afternoon ?? 0),
+                    "기존 배달 합계"
+                ),
+                other: null,
+                note: note(raw.note)
+            };
         }
 
-        return {
-            morning,
-            afternoon,
+        if (raw.mode !== "detail" && raw.mode !== "combined") {
+            throw new Error("수입 입력 방식은 상세 또는 합산이어야 합니다.");
+        }
+
+        const readOptional = (key, maximum = C.MAX_WON) => {
+            const value = raw[key];
+
+            return value === undefined || value === null
+                ? null
+                : storedWon(value, false, maximum);
+        };
+
+        const coupang = readOptional("coupang");
+        const baemin = readOptional("baemin");
+        const combined = readOptional("combined", C.MAX_WON * 2);
+        const other = readOptional("other");
+
+        if (raw.mode === "detail" && combined !== null) {
+            throw new Error(
+                "상세 입력에는 배달 합산 금액을 함께 저장할 수 없습니다."
+            );
+        }
+
+        if (raw.mode === "combined" &&
+            (coupang !== null || baemin !== null)) {
+            throw new Error(
+                "합산 입력에는 쿠팡·배민 금액을 함께 저장할 수 없습니다."
+            );
+        }
+
+        const cleaned = {
+            mode: raw.mode,
+            coupang: raw.mode === "detail" ? coupang : null,
+            baemin: raw.mode === "detail" ? baemin : null,
+            combined: raw.mode === "combined" ? combined : null,
+            other,
             note: note(raw.note)
         };
+
+        if (!C.hasDelivery(cleaned) && other === null) {
+            throw new Error(
+                "배달 또는 그 외 수입이 하나 이상 필요합니다. 무수입은 0으로 기록하세요."
+            );
+        }
+
+        C.deliveryAmount(cleaned);
+
+        return cleaned;
     }
 
     function tradingRecord(raw) {

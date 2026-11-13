@@ -112,24 +112,24 @@
             equal(result.total, -25200);
         });
 
-        test("주 5일, 월요일부터 5회 배달은 금요일 완료", () => {
+        test("주 7일, 월요일부터 5회 배달은 금요일 완료", () => {
             equal(
-                C.finishDate("2030-01-07", 5, [1, 2, 3, 4, 5]),
+                C.finishDate("2030-01-07", 5, C.ALL_DAYS),
                 "2030-01-11"
             );
         });
 
-        test("주 5일, 월요일부터 6회 배달은 다음 월요일 완료", () => {
+        test("주 7일, 월요일부터 6회 배달은 토요일 완료", () => {
             equal(
-                C.finishDate("2030-01-07", 6, [1, 2, 3, 4, 5]),
-                "2030-01-14"
+                C.finishDate("2030-01-07", 6, C.ALL_DAYS),
+                "2030-01-12"
             );
         });
 
-        test("시작일이 토요일이면 다음 월요일부터 계산", () => {
+        test("주 7일은 토요일 시작도 같은 날부터 수입 반영", () => {
             equal(
-                C.finishDate("2030-01-05", 1, [1, 2, 3, 4, 5]),
-                "2030-01-07"
+                C.finishDate("2030-01-05", 1, C.ALL_DAYS),
+                "2030-01-05"
             );
         });
 
@@ -164,16 +164,16 @@
             equal(result.calendarDays, 5);
         });
 
-        test("나누어떨어지지 않는 필요 일수는 올림", () => {
+        test("주 7일에서 나누어떨어지지 않는 필요 일수는 올림", () => {
             const result = C.project(
                 200001,
                 40000,
                 "2030-01-07",
-                [1, 2, 3, 4, 5]
+                C.ALL_DAYS
             );
 
             equal(result.workDays, 6);
-            equal(result.finish, "2030-01-14");
+            equal(result.finish, "2030-01-12");
         });
 
         test("남은 손실이 0원이면 필요한 배달은 0일", () => {
@@ -195,13 +195,11 @@
                 200000,
                 "2030-01-07",
                 "2030-01-11",
-                [1, 2, 3, 4, 5]
+                C.ALL_DAYS
             );
 
             equal(result.availableDays, 5);
             equal(result.requiredDaily, 40000);
-            equal(result.morning, 20000);
-            equal(result.afternoon, 20000);
         });
 
         test("완료일이 시작일 전이면 배달 가능한 날은 0일", () => {
@@ -271,6 +269,130 @@
             equal(
                 C.effectiveStart("2030-01-20", "2030-01-10"),
                 "2030-01-20"
+            );
+        });
+
+        test("상세 입력은 쿠팡과 배민을 합산", () => {
+            equal(
+                C.deliveryAmount({
+                    mode: "detail",
+                    coupang: 18000,
+                    baemin: 22000,
+                    combined: null,
+                    other: null
+                }),
+                40000
+            );
+        });
+
+        test("합산 입력은 합산 금액만 계산", () => {
+            equal(
+                C.deliveryAmount({
+                    mode: "combined",
+                    coupang: null,
+                    baemin: null,
+                    combined: 35000,
+                    other: 10000
+                }),
+                35000
+            );
+        });
+
+        test("배달 합산 0원은 배달 기록으로 인정", () => {
+            equal(
+                C.hasDelivery({
+                    mode: "combined",
+                    combined: 0
+                }),
+                true
+            );
+        });
+
+        test("그 외 수입만 있으면 배달 기록으로 세지 않음", () => {
+            equal(
+                C.hasDelivery({
+                    mode: "combined",
+                    combined: null,
+                    other: 50000
+                }),
+                false
+            );
+        });
+
+        test("배달 평균은 그 외 수입만 있는 날을 제외", () => {
+            const result = C.deliveryAverage({
+                "2020-01-01": {
+                    mode: "detail",
+                    coupang: 20000,
+                    baemin: 20000,
+                    combined: null,
+                    other: 10000
+                },
+                "2020-01-02": {
+                    mode: "combined",
+                    combined: null,
+                    other: 80000
+                },
+                "2020-01-03": {
+                    mode: "combined",
+                    combined: 0,
+                    other: null
+                }
+            });
+
+            equal(result.days, 2);
+            equal(result.total, 40000);
+            equal(result.average, 20000);
+        });
+
+        test("그 외 수입은 배달과 별도로 전체 회복액에 반영", () => {
+            const result = C.totals({
+                deliveries: {
+                    "2020-01-01": {
+                        mode: "combined",
+                        coupang: null,
+                        baemin: null,
+                        combined: 40000,
+                        other: 30000
+                    },
+                    "2020-01-02": {
+                        mode: "detail",
+                        coupang: null,
+                        baemin: null,
+                        combined: null,
+                        other: 10000
+                    }
+                },
+                trading: {}
+            });
+
+            equal(result.delivery, 40000);
+            equal(result.other, 40000);
+            equal(result.recovered, 80000);
+            equal(result.deliveryDays, 1);
+        });
+
+        test("기존 오전·오후 목표는 하루 목표 합계로 변환", () => {
+            const result = C.plan({
+                morning: 20000,
+                afternoon: 15000,
+                weekdays: [1, 2, 3, 4, 5],
+                start: "2030-01-07",
+                deadline: null
+            });
+
+            equal(result.daily, 35000);
+            equal(result.weekdays, undefined);
+        });
+
+        test("주 7일이면 월요일부터 일요일까지 7일", () => {
+            equal(
+                C.countWorkDays(
+                    "2030-01-07",
+                    "2030-01-13",
+                    C.ALL_DAYS
+                ),
+                7
             );
         });
 

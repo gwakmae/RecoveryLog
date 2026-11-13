@@ -171,9 +171,12 @@ RecoveryLog.App = (() => {
                         "main"
                     ) +
                 "</div>" +
-                line("트레이딩 순손익", C.won(total.trading), total.trading < 0
-                    ? "negative"
-                    : "positive") +
+                line("그 외 수입 누계", C.won(total.other)) +
+                line(
+                    "트레이딩 순손익",
+                    C.won(total.trading),
+                    total.trading < 0 ? "negative" : "positive"
+                ) +
                 line("리베이트", C.won(total.rebate)) +
                 line("통합 회복액", C.won(total.recovered)) +
                 line("시작 손실", C.won(loss)) +
@@ -191,49 +194,103 @@ RecoveryLog.App = (() => {
     function deliveryView() {
         const state = D.get();
         const record = state.deliveries[selectedDate];
+        const mode = record?.mode || "combined";
         const plan = state.settings.plan;
         const month = C.totals(state, selectedDate.slice(0, 7));
         const total = C.totals(state);
 
         main.innerHTML =
             '<section class="panel">' +
-                "<h2>오늘 배달</h2>" +
+                "<h2>오늘 수입</h2>" +
                 dateBar() +
                 '<form id="delivery-form" class="stack">' +
-                    '<div class="grid">' +
-                        moneyField("morning", "배달－오전 · 원", record?.morning) +
-                        moneyField("afternoon", "배달－오후 · 원", record?.afternoon) +
+                    '<fieldset class="income-modes">' +
+                        "<legend>배달 수입 입력 방식</legend>" +
+                        '<div class="mode-options">' +
+                            "<label>" +
+                                '<input type="radio" name="incomeMode" value="combined"' +
+                                    (mode === "combined" ? " checked" : "") +
+                                ">합산 입력</label>" +
+                            "<label>" +
+                                '<input type="radio" name="incomeMode" value="detail"' +
+                                    (mode === "detail" ? " checked" : "") +
+                                ">쿠팡·배민 상세 입력</label>" +
+                        "</div>" +
+                    "</fieldset>" +
+
+                    '<div id="combined-income-fields"' +
+                        (mode === "combined" ? "" : " hidden") +
+                    ">" +
+                        moneyField(
+                            "combined",
+                            "배달 합산 수입 · 원",
+                            record?.combined
+                        ) +
                     "</div>" +
+
+                    '<div id="detail-income-fields" class="grid"' +
+                        (mode === "detail" ? "" : " hidden") +
+                    ">" +
+                        moneyField("coupang", "쿠팡 수입 · 원", record?.coupang) +
+                        moneyField("baemin", "배민 수입 · 원", record?.baemin) +
+                    "</div>" +
+
+                    '<p class="hint">선택한 방식의 금액만 저장·합산합니다. ' +
+                        "입력 방식을 바꿔도 금액을 자동으로 옮기지는 않습니다.</p>" +
+
                     '<div class="metric main">' +
                         "<span>이 날짜 배달 합계</span>" +
                         '<strong id="delivery-preview">0원</strong>' +
                     "</div>" +
+
                     '<div id="daily-target"></div>' +
+
+                    '<div class="other-income">' +
+                        moneyField(
+                            "other",
+                            "그 외 수입 · 원, 선택",
+                            record?.other,
+                            "다른 일로 번 금액"
+                        ) +
+                        '<p class="hint">배달 외 수입입니다. 전체 회복액에는 포함하고 ' +
+                            "배달 합계와 배달 평균에서는 제외합니다.</p>" +
+                    "</div>" +
+
+                    '<div class="metric">' +
+                        "<span>이 날짜 배달 + 그 외 수입</span>" +
+                        '<strong id="income-preview">0원</strong>' +
+                    "</div>" +
+
                     '<label class="field"><span>메모 · 선택</span>' +
                         `<textarea name="note" maxlength="2000">${e(record?.note || "")}</textarea>` +
                     "</label>" +
+
                     '<p class="hint">빈칸은 미입력, 0은 수입 없음입니다. ' +
-                        "오전·오후 중 하나만 입력해도 저장할 수 있습니다.</p>" +
+                        "배달 없이 그 외 수입만 저장할 수도 있습니다.</p>" +
+
                     '<div class="actions">' +
-                        '<button class="button" type="submit">배달 저장</button>' +
+                        '<button class="button" type="submit">수입 저장</button>' +
                         (record
                             ? '<button class="button danger" type="button" ' +
-                                'data-action="delete-delivery">이 날짜 배달 삭제</button>'
+                                'data-action="delete-delivery">이 날짜 수입 삭제</button>'
                             : "") +
                     "</div>" +
                 "</form>" +
             "</section>" +
+
             '<section class="panel">' +
-                `<h2>${e(selectedDate.slice(0, 7))} 배달</h2>` +
+                `<h2>${e(selectedDate.slice(0, 7))} 수입</h2>` +
                 '<div class="grid">' +
-                    metric("이번 달 배달 수익", C.won(month.delivery)) +
+                    metric("이번 달 배달 수익", C.won(month.delivery), "main") +
+                    metric("이번 달 그 외 수입", C.won(month.other)) +
                     metric("전체 배달 수익", C.won(total.delivery)) +
+                    metric("전체 그 외 수입", C.won(total.other)) +
                 "</div>" +
-                `<p class="hint">선택한 목표: 오전 ${C.won(plan.morning)} + ` +
-                    `오후 ${C.won(plan.afternoon)}</p>` +
+                `<p class="hint">선택한 하루 배달 목표: ${C.won(plan.daily)} · 주 7일</p>` +
                 '<div class="actions"><button class="button secondary" ' +
                     'data-view="plan">예상 완료일과 목표 보기</button></div>' +
             "</section>" +
+
             overview();
 
         updateDeliveryPreview();
@@ -241,45 +298,65 @@ RecoveryLog.App = (() => {
 
     function readDelivery() {
         const form = document.getElementById("delivery-form");
+        const mode = form.elements.incomeMode.value;
 
         return {
-            morning: C.optionalWon(form.elements.morning.value),
-            afternoon: C.optionalWon(form.elements.afternoon.value),
+            mode,
+            coupang: mode === "detail"
+                ? C.optionalWon(form.elements.coupang.value)
+                : null,
+            baemin: mode === "detail"
+                ? C.optionalWon(form.elements.baemin.value)
+                : null,
+            combined: mode === "combined"
+                ? C.optionalWon(form.elements.combined.value)
+                : null,
+            other: C.optionalWon(form.elements.other.value),
             note: form.elements.note.value.trim()
         };
     }
 
     function updateDeliveryPreview() {
         const amount = document.getElementById("delivery-preview");
+        const income = document.getElementById("income-preview");
         const target = document.getElementById("daily-target");
 
-        if (!amount || !target) {
+        if (!amount || !income || !target) {
             return;
         }
 
+        const form = document.getElementById("delivery-form");
+        const mode = form.elements.incomeMode.value;
+
+        document.getElementById("combined-income-fields").hidden =
+            mode !== "combined";
+
+        document.getElementById("detail-income-fields").hidden =
+            mode !== "detail";
+
         try {
             const record = readDelivery();
-            const sum = (record.morning ?? 0) + (record.afternoon ?? 0);
-            const plan = D.get().settings.plan;
-            const goal = plan.morning + plan.afternoon;
-            const workingDay = plan.weekdays.includes(C.weekday(selectedDate));
+            const sum = C.deliveryAmount(record);
+            const other = record.other ?? 0;
+            const goal = D.get().settings.plan.daily;
 
             amount.textContent = C.won(sum);
+            income.textContent = C.won(C.safe(sum + other));
+
             target.innerHTML =
-                line("선택한 하루 목표", C.won(goal)) +
+                line("하루 배달 목표 · 주 7일", C.won(goal)) +
                 line(
-                    sum >= goal ? "목표 초과" : "목표까지",
+                    sum >= goal ? "배달 목표 초과" : "배달 목표까지",
                     C.won(Math.abs(goal - sum)),
                     sum >= goal ? "positive" : ""
                 ) +
-                '<p class="hint">' +
-                    (workingDay
-                        ? "선택한 배달 요일입니다."
-                        : "계획상 쉬는 요일입니다. 실제 수입은 그대로 기록할 수 있습니다.") +
-                "</p>";
+                '<p class="hint">그 외 수입은 배달 목표 달성액에는 넣지 않고 ' +
+                    "전체 회복액에 별도로 더합니다.</p>";
         } catch (error) {
             amount.textContent = "금액 확인";
-            target.innerHTML = `<p class="negative">${e(error.message)}</p>`;
+            income.textContent = "금액 확인";
+            target.innerHTML =
+                `<p class="negative">${e(error.message)}</p>`;
         }
     }
 
@@ -453,30 +530,40 @@ RecoveryLog.App = (() => {
         const last = C.monthLast(first);
         const rows = [];
 
+        const incomeCell = value =>
+            value === null || value === undefined ? "—" : C.won(value);
+
         for (let date = first; date <= last; date = C.addDays(date, 1)) {
-            const delivery = state.deliveries[date];
+            const record = state.deliveries[date];
             const trading = state.trading[date];
-            const day = trading ? C.tradeDay(trading) : null;
-            const deliveryTotal = delivery
-                ? (delivery.morning ?? 0) + (delivery.afternoon ?? 0)
-                : null;
+            const trade = trading ? C.tradeDay(trading) : null;
+
+            const hasDelivery = record && C.hasDelivery(record);
+            const delivery = hasDelivery ? C.deliveryAmount(record) : null;
+            const other = record?.other ?? null;
+
+            const mode = !hasDelivery
+                ? "—"
+                : record.mode === "detail"
+                    ? "상세"
+                    : "합산";
 
             rows.push(
                 "<tr>" +
                     `<td>${e(C.dateLabel(date))}</td>` +
-                    `<td>${delivery ? C.won(delivery.morning ?? 0) : "—"}` +
-                        (delivery && delivery.morning === null ? " · 미입력" : "") +
-                    "</td>" +
-                    `<td>${delivery ? C.won(delivery.afternoon ?? 0) : "—"}` +
-                        (delivery && delivery.afternoon === null ? " · 미입력" : "") +
-                    "</td>" +
-                    `<td>${deliveryTotal === null ? "—" : C.won(deliveryTotal)}</td>` +
-                    `<td class="${day?.total < 0 ? "negative" : ""}">` +
-                        `${day ? C.won(day.total) : "—"}</td>` +
-                    '<td><button class="button secondary small" ' +
-                        `data-open-date="${date}" data-kind="delivery">배달</button> ` +
+                    `<td>${mode}</td>` +
+                    `<td>${record?.mode === "detail" ? incomeCell(record.coupang) : "—"}</td>` +
+                    `<td>${record?.mode === "detail" ? incomeCell(record.baemin) : "—"}</td>` +
+                    `<td>${incomeCell(delivery)}</td>` +
+                    `<td>${incomeCell(other)}</td>` +
+                    `<td class="${trade?.total < 0 ? "negative" : ""}">` +
+                        `${trade ? C.won(trade.total) : "—"}</td>` +
+                    "<td>" +
                         '<button class="button secondary small" ' +
-                        `data-open-date="${date}" data-kind="trading">거래</button></td>` +
+                            `data-open-date="${date}" data-kind="delivery">수입</button> ` +
+                        '<button class="button secondary small" ' +
+                            `data-open-date="${date}" data-kind="trading">거래</button>` +
+                    "</td>" +
                 "</tr>"
             );
 
@@ -492,25 +579,33 @@ RecoveryLog.App = (() => {
                     `<input id="month-input" type="month" value="${selectedMonth}" ` +
                         `min="1900-01" max="${C.today().slice(0, 7)}">` +
                 "</label>" +
+
                 '<div class="grid" style="margin-top:16px">' +
                     metric("배달 수익", C.won(total.delivery), "main") +
-                    metric("통합 회복액", C.won(total.recovered)) +
+                    metric("그 외 수입", C.won(total.other)) +
                     metric("트레이딩 순손익", C.won(total.trading)) +
                     metric("리베이트", C.won(total.rebate)) +
+                    metric("통합 회복액", C.won(total.recovered), "main") +
                 "</div>" +
+
                 '<div class="table-wrap"><table>' +
-                    "<thead><tr><th>날짜</th><th>오전</th><th>오후</th>" +
-                        "<th>배달 합계</th><th>거래+리베이트</th><th>열기</th></tr></thead>" +
+                    "<thead><tr>" +
+                        "<th>날짜</th><th>입력 방식</th>" +
+                        "<th>쿠팡</th><th>배민</th>" +
+                        "<th>배달 합계</th><th>그 외 수입</th>" +
+                        "<th>거래+리베이트</th><th>열기</th>" +
+                    "</tr></thead>" +
                     `<tbody>${rows.join("")}</tbody>` +
                 "</table></div>" +
-                '<p class="hint">미래 날짜에는 실제 수입을 기록하지 않습니다.</p>' +
+
+                '<p class="hint">합산 입력 기록은 쿠팡·배민으로 임의 분배하지 않습니다. ' +
+                    "미래 날짜에는 실제 수입을 기록하지 않습니다.</p>" +
             "</section>" +
             overview();
     }
 
     function planForm() {
         const plan = D.get().settings.plan;
-        const labels = ["일", "월", "화", "수", "목", "금", "토"];
         const tomorrow = C.addDays(C.today(), 1);
         const start = C.effectiveStart(plan.start);
 
@@ -518,19 +613,15 @@ RecoveryLog.App = (() => {
             '<section class="panel">' +
                 "<h2>내 배달 목표</h2>" +
                 '<form id="plan-form" class="stack">' +
-                    '<div class="grid">' +
-                        moneyField("morning", "오전 목표 · 원", plan.morning, "20000") +
-                        moneyField("afternoon", "오후 목표 · 원", plan.afternoon, "20000") +
-                    "</div>" +
-                    "<div><h3>배달하는 요일</h3>" +
-                        '<div class="weekdays">' +
-                            labels.map((label, day) =>
-                                "<label>" +
-                                    `<input type="checkbox" name="weekday" value="${day}"` +
-                                        (plan.weekdays.includes(day) ? " checked" : "") +
-                                    `>${label}</label>`
-                            ).join("") +
-                        "</div>" +
+                    moneyField(
+                        "daily",
+                        "하루 배달 목표 · 원",
+                        plan.daily,
+                        "40000"
+                    ) +
+                    '<div class="metric">' +
+                        "<span>배달 일정</span>" +
+                        "<strong>주 7일 · 매일</strong>" +
                     "</div>" +
                     '<label class="field"><span>계획 시작일</span>' +
                         `<input type="date" name="start" min="${tomorrow}" value="${start}">` +
@@ -539,8 +630,9 @@ RecoveryLog.App = (() => {
                         `<input type="date" name="deadline" min="${start}" ` +
                             `value="${e(plan.deadline || "")}">` +
                     "</label>" +
-                    '<p class="hint">오늘까지 저장한 실적을 반영하고, 최소 내일부터 계산합니다. ' +
-                        "선택한 요일에만 수입이 발생한다고 가정합니다.</p>" +
+                    '<p class="hint">오늘까지 저장한 모든 수입·손익을 반영하고 ' +
+                        "최소 내일부터 매일 배달한다고 계산합니다. " +
+                        "미래의 그 외 수입과 트레이딩 수익은 예상에 넣지 않습니다.</p>" +
                     '<div class="actions"><button class="button" type="submit">' +
                         "목표 저장 · 시나리오 계산</button></div>" +
                 "</form>" +
@@ -548,20 +640,27 @@ RecoveryLog.App = (() => {
         );
     }
 
-    function scenarioCard(title, daily, morning, afternoon, remaining, plan, selected) {
+    function scenarioCard(title, daily, remaining, plan, selected) {
         const start = C.effectiveStart(plan.start);
-        const result = C.project(remaining, daily, start, plan.weekdays);
+        const result = C.project(
+            remaining,
+            daily,
+            start,
+            C.ALL_DAYS
+        );
 
         let body;
 
         if (result.workDays === 0) {
             body = "<p>이미 회복 목표에 도달했습니다.</p>";
         } else if (result.workDays === null) {
-            body = "<p>하루 목표가 0원이어서 예상 기간을 계산할 수 없습니다.</p>";
+            body = "<p>하루 수입이 0원이어서 예상 기간을 계산할 수 없습니다.</p>";
         } else {
             body =
                 `<p>필요한 배달 <b>${C.integer(result.workDays)}일</b></p>` +
-                `<p>예상 완료 <b>${result.finish ? e(C.dateLabel(result.finish)) : "날짜 표시 범위 초과"}</b></p>` +
+                `<p>예상 완료 <b>${result.finish
+                    ? e(C.dateLabel(result.finish))
+                    : "날짜 표시 범위 초과"}</b></p>` +
                 (result.finish
                     ? `<p>시작일부터 달력 기준 ${C.integer(result.calendarDays)}일</p>`
                     : "");
@@ -570,11 +669,13 @@ RecoveryLog.App = (() => {
         return (
             `<article class="scenario-card${selected ? " selected" : ""}">` +
                 `<h3>${e(title)}</h3>` +
-                `<strong>${C.won(daily)} / 배달일</strong>` +
-                `<p>오전 ${C.won(morning)} · 오후 ${C.won(afternoon)}</p>` +
+                `<strong>${C.won(daily)} / 하루</strong>` +
+                "<p>주 7일 배달 기준</p>" +
                 body +
-                '<button class="button secondary small" ' +
-                    `data-select-plan="${morning},${afternoon}">이 금액을 목표로 선택</button>` +
+                (daily > 0
+                    ? '<button class="button secondary small" ' +
+                        `data-select-plan="${daily}">이 금액을 목표로 선택</button>`
+                    : '<p class="hint">양수 수입이 쌓이면 목표로 선택할 수 있습니다.</p>') +
             "</article>"
         );
     }
@@ -590,25 +691,20 @@ RecoveryLog.App = (() => {
         const total = C.totals(state);
         const remaining = Math.max(0, loss - total.recovered);
         const plan = state.settings.plan;
-        const custom = plan.morning + plan.afternoon;
         const actual = C.deliveryAverage(state.deliveries);
 
         const options = [
-            ["보수적으로 · 하루 3만 원", 30000, 15000, 15000],
-            ["평소 수준 · 하루 3만 5천 원", 35000, 15000, 20000],
-            ["오전·오후 각 2만 원", 40000, 20000, 20000],
-            ["높은 수입 참고 · 하루 6만 원", 60000, 30000, 30000],
-            ["직접 설정한 목표", custom, plan.morning, plan.afternoon]
+            ["보수적으로 · 하루 3만 원", 30000],
+            ["평소 수준 · 하루 3만 5천 원", 35000],
+            ["하루 4만 원", 40000],
+            ["높은 수입 참고 · 하루 6만 원", 60000],
+            ["직접 설정한 목표", plan.daily]
         ];
 
         if (actual.days > 0) {
-            const morning = Math.floor(actual.average / 2);
-
             options.push([
-                `실제 기록일 평균 · ${actual.days}일`,
-                actual.average,
-                morning,
-                actual.average - morning
+                `실제 배달 기록일 평균 · ${actual.days}일`,
+                actual.average
             ]);
         }
 
@@ -619,28 +715,28 @@ RecoveryLog.App = (() => {
                 remaining,
                 C.effectiveStart(plan.start),
                 plan.deadline,
-                plan.weekdays
+                C.ALL_DAYS
             );
 
             reverse =
                 '<section class="panel">' +
                     "<h2>목표 완료일에서 역산</h2>" +
                     line("목표 완료일", C.dateLabel(plan.deadline)) +
-                    line("배달 가능한 날", `${C.integer(result.availableDays)}일`) +
+                    line("배달 가능한 날 · 주 7일", `${C.integer(result.availableDays)}일`) +
                     (result.requiredDaily === null
-                        ? '<p class="notice">현재 시작일과 요일 조건으로는 완료일까지 배달 가능한 날이 없습니다.</p>'
-                        : line("필요한 하루 수익", C.won(result.requiredDaily)) +
-                            line("오전 목표 예시", C.won(result.morning)) +
-                            line("오후 목표 예시", C.won(result.afternoon)) +
+                        ? '<p class="notice">현재 계획 시작일 이후에 완료일을 지정하세요.</p>'
+                        : line("필요한 하루 배달 수익", C.won(result.requiredDaily)) +
                             (result.requiredDaily > 60000
                                 ? '<p class="notice">필요한 하루 수익이 6만 원을 넘습니다. ' +
-                                    "기한을 늘리거나 배달 요일을 조정해 보세요.</p>"
+                                    "목표 완료일을 늦추는 계획도 비교해 보세요.</p>"
                                 : result.requiredDaily > 40000
                                     ? '<p class="notice">평소 예상한 하루 3만~4만 원보다 높은 목표입니다.</p>'
                                     : "") +
-                            '<div class="actions"><button class="button secondary" ' +
-                                `data-select-plan="${result.morning},${result.afternoon}">` +
-                                "역산 금액을 내 목표로 선택</button></div>") +
+                            (result.requiredDaily > 0
+                                ? '<div class="actions"><button class="button secondary" ' +
+                                    `data-select-plan="${result.requiredDaily}">` +
+                                    "역산 금액을 내 목표로 선택</button></div>"
+                                : '<p class="hint">이미 회복 목표에 도달했습니다.</p>')) +
                 "</section>";
         }
 
@@ -649,23 +745,24 @@ RecoveryLog.App = (() => {
                 "<h2>배달 수입별 예상 시나리오</h2>" +
                 line("현재 남은 손실", C.won(remaining)) +
                 line("계산 시작일", C.dateLabel(C.effectiveStart(plan.start))) +
-                line("주당 배달 일수", `${plan.weekdays.length}일`) +
+                line("배달 일정", "주 7일 · 매일") +
                 '<div class="scenario-cards">' +
-                    options.map(([title, daily, morning, afternoon]) =>
+                    options.map(([title, daily]) =>
                         scenarioCard(
                             title,
                             daily,
-                            morning,
-                            afternoon,
                             remaining,
                             plan,
-                            morning === plan.morning && afternoon === plan.afternoon
+                            daily === plan.daily
                         )
                     ).join("") +
                 "</div>" +
-                '<p class="hint">예상치는 수익을 보장하지 않습니다. 공휴일·날씨·수입 변동은 ' +
-                    "자동 반영하지 않으며 미래 트레이딩 수익도 포함하지 않습니다. " +
-                    "실제 평균은 0원 기록을 포함하고 미입력일은 제외하며 원 미만은 버립니다.</p>" +
+                '<p class="hint">예상치는 수익을 보장하지 않습니다. ' +
+                    "매일 같은 배달 수입이 발생한다고 가정합니다. " +
+                    "그 외 수입과 트레이딩은 이미 저장한 실적만 남은 손실에 반영하고 " +
+                    "미래 예상 수익은 넣지 않습니다. " +
+                    "실제 평균에는 배달 0원 기록을 포함하며 " +
+                    "배달 미입력일과 그 외 수입만 있는 날은 제외합니다.</p>" +
             "</section>" +
             reverse
         );
@@ -731,7 +828,9 @@ RecoveryLog.App = (() => {
             "</details>" +
             '<section class="panel">' +
                 "<h2>기록 기준</h2>" +
-                '<p class="hint">배달 수입은 비용 차감 없이 전액 반영합니다. ' +
+                '<p class="hint">배달과 그 외 수입은 비용 차감 없이 전액 반영합니다. ' +
+                    "배달은 상세 입력과 합산 입력 중 선택한 방식만 계산합니다. " +
+                    "그 외 수입은 배달 평균에서 제외합니다. " +
                     "트레이딩은 날짜별 저장 환율을 사용합니다. " +
                     "실제 상환액이나 은행 잔액을 관리하는 앱은 아닙니다.</p>" +
                 '<p class="hint">브라우저 데이터를 삭제하면 로컬 기록이 사라질 수 있습니다. ' +
@@ -792,18 +891,10 @@ RecoveryLog.App = (() => {
     }
 
     function readPlan(form) {
-        const start = form.elements.start.value;
-        const deadline = form.elements.deadline.value || null;
-        const weekdays = Array.from(
-            form.querySelectorAll('[name="weekday"]:checked')
-        ).map(input => Number(input.value));
-
         return C.plan({
-            morning: C.requiredWon(form.elements.morning.value),
-            afternoon: C.requiredWon(form.elements.afternoon.value),
-            weekdays,
-            start,
-            deadline
+            daily: C.requiredWon(form.elements.daily.value),
+            start: form.elements.start.value,
+            deadline: form.elements.deadline.value || null
         });
     }
 
@@ -825,13 +916,15 @@ RecoveryLog.App = (() => {
         if (form.id === "delivery-form") {
             const record = readDelivery();
 
-            if (record.morning === null && record.afternoon === null) {
-                throw new Error("오전·오후 중 하나에 수익을 입력하세요. 수입이 없으면 0입니다.");
+            if (!C.hasDelivery(record) && record.other === null) {
+                throw new Error(
+                    "배달 또는 그 외 수입을 입력하세요. 수입이 없으면 0으로 기록할 수 있습니다."
+                );
             }
 
             D.saveDelivery(selectedDate, record);
             render();
-            toast("배달 수익을 저장했습니다.");
+            toast("수입을 저장했습니다.");
         } else if (form.id === "trading-form") {
             const record = readTrading();
 
@@ -850,7 +943,7 @@ RecoveryLog.App = (() => {
             });
 
             render();
-            toast("목표와 배달 요일을 저장했습니다.");
+            toast("하루 목표를 저장했습니다. 주 7일 기준으로 계산합니다.");
         } else if (form.id === "settings-form") {
             const loss = C.requiredWon(form.elements.loss.value);
             const current = D.get().settings.lossWon;
@@ -888,10 +981,12 @@ RecoveryLog.App = (() => {
         } else if (name === "next-date") {
             changeDate(C.addDays(selectedDate, 1));
         } else if (name === "delete-delivery") {
-            if (window.confirm("이 날짜의 배달 기록만 삭제할까요? 트레이딩은 유지됩니다.")) {
+            if (window.confirm(
+                "이 날짜의 배달과 그 외 수입을 삭제할까요? 트레이딩은 유지됩니다."
+            )) {
                 D.saveDelivery(selectedDate, null);
                 render();
-                toast("배달 기록을 삭제했습니다.");
+                toast("이 날짜의 수입 기록을 삭제했습니다.");
             }
         } else if (name === "delete-trading") {
             if (window.confirm("이 날짜의 트레이딩 기록만 삭제할까요? 배달은 유지됩니다.")) {
@@ -1093,17 +1188,18 @@ RecoveryLog.App = (() => {
             }
 
             run(async () => {
-                const [morning, afternoon] = button.dataset.selectPlan
-                    .split(",")
-                    .map(Number);
+                const daily = C.requiredWon(button.dataset.selectPlan);
+
+                if (daily <= 0) {
+                    throw new Error("하루 배달 목표는 0원보다 커야 합니다.");
+                }
 
                 D.update(state => {
-                    state.settings.plan.morning = morning;
-                    state.settings.plan.afternoon = afternoon;
+                    state.settings.plan.daily = daily;
                 });
 
                 render();
-                toast("첫 화면에 표시할 목표로 선택했습니다.");
+                toast("하루 배달 목표로 선택했습니다.");
             });
 
             return;
@@ -1202,7 +1298,7 @@ RecoveryLog.App = (() => {
                 const trades = Object.keys(restored.trading).length;
 
                 if (!window.confirm(
-                    `배달 ${count}일, 트레이딩 ${trades}일의 백업으로 교체할까요?\n` +
+                    `수입 ${count}일, 트레이딩 ${trades}일의 백업으로 교체할까요?\n` +
                     "현재 로컬 기록은 교체됩니다."
                 )) {
                     target.value = "";

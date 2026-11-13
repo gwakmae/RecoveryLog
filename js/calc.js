@@ -7,6 +7,7 @@ RecoveryLog.Calc = (() => {
     const MAX_WON = 100000000000;
     const MAX_CENTS = 10000000000;
     const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
+    const ALL_DAYS = Object.freeze([0, 1, 2, 3, 4, 5, 6]);
 
     function integer(value) {
         return Number(value).toLocaleString("ko-KR");
@@ -235,26 +236,33 @@ RecoveryLog.Calc = (() => {
     }
 
     function plan(raw) {
-        const morning = requiredWon(raw.morning);
-        const afternoon = requiredWon(raw.afternoon);
+        const legacy = raw.daily === undefined;
 
-        if (morning + afternoon <= 0) {
-            throw new Error("오전·오후 목표 합계는 0원보다 커야 합니다.");
+        const daily = legacy
+            ? safe(
+                requiredWon(raw.morning) + requiredWon(raw.afternoon),
+                "기존 하루 목표"
+            )
+            : requiredWon(raw.daily);
+
+        if (daily <= 0) {
+            throw new Error("하루 배달 목표는 0원보다 커야 합니다.");
         }
 
         const start = validDate(raw.start);
-        const deadline = raw.deadline === null || raw.deadline === ""
-            ? null
-            : validDate(raw.deadline);
+        const deadline =
+            raw.deadline === null ||
+            raw.deadline === undefined ||
+            raw.deadline === ""
+                ? null
+                : validDate(raw.deadline);
 
         if (deadline && deadline < start) {
             throw new Error("목표 완료일은 설정한 시작일보다 빠를 수 없습니다.");
         }
 
         return {
-            morning,
-            afternoon,
-            weekdays: validWeekdays(raw.weekdays),
+            daily,
             start,
             deadline
         };
@@ -283,8 +291,49 @@ RecoveryLog.Calc = (() => {
         };
     }
 
+    function hasDelivery(record) {
+        if (!record) {
+            return false;
+        }
+
+        if (record.mode === "detail") {
+            return record.coupang !== null && record.coupang !== undefined ||
+                record.baemin !== null && record.baemin !== undefined;
+        }
+
+        if (record.mode === "combined") {
+            return record.combined !== null && record.combined !== undefined;
+        }
+
+        return record.morning !== null && record.morning !== undefined ||
+            record.afternoon !== null && record.afternoon !== undefined;
+    }
+
+    function deliveryAmount(record) {
+        if (!record) {
+            return 0;
+        }
+
+        if (record.mode === "detail") {
+            return safe(
+                (record.coupang ?? 0) + (record.baemin ?? 0),
+                "배달 합계"
+            );
+        }
+
+        if (record.mode === "combined") {
+            return safe(record.combined ?? 0, "배달 합계");
+        }
+
+        return safe(
+            (record.morning ?? 0) + (record.afternoon ?? 0),
+            "기존 배달 합계"
+        );
+    }
+
     function totals(state, monthPrefix = null) {
         let delivery = 0;
+        let other = 0;
         let trading = 0;
         let rebate = 0;
         let deliveryDays = 0;
@@ -294,11 +343,12 @@ RecoveryLog.Calc = (() => {
                 return;
             }
 
-            delivery = safe(
-                delivery + (record.morning ?? 0) + (record.afternoon ?? 0)
-            );
+            delivery = safe(delivery + deliveryAmount(record));
+            other = safe(other + (record.other ?? 0));
 
-            deliveryDays += 1;
+            if (hasDelivery(record)) {
+                deliveryDays += 1;
+            }
         });
 
         Object.entries(state.trading).forEach(([date, record]) => {
@@ -314,23 +364,24 @@ RecoveryLog.Calc = (() => {
 
         return {
             delivery,
+            other,
             trading,
             rebate,
-            recovered: safe(safe(delivery + trading) + rebate),
+            recovered: sum([delivery, other, trading, rebate]),
             deliveryDays
         };
     }
 
     function deliveryAverage(deliveries) {
-        const records = Object.values(deliveries);
-        const total = sum(records.map(record =>
-            (record.morning ?? 0) + (record.afternoon ?? 0)
-        ));
+        const records = Object.values(deliveries).filter(hasDelivery);
+        const total = sum(records.map(deliveryAmount));
 
         return {
             total,
             days: records.length,
-            average: records.length ? Math.floor(total / records.length) : 0
+            average: records.length
+                ? Math.floor(total / records.length)
+                : 0
         };
     }
 
@@ -414,7 +465,7 @@ RecoveryLog.Calc = (() => {
         };
     }
 
-    function reverse(remaining, start, deadline, weekdays) {
+    function reverse(remaining, start, deadline, weekdays = ALL_DAYS) {
         safe(remaining, "남은 손실");
 
         const availableDays = countWorkDays(start, deadline, weekdays);
@@ -422,35 +473,27 @@ RecoveryLog.Calc = (() => {
         if (remaining <= 0) {
             return {
                 availableDays,
-                requiredDaily: 0,
-                morning: 0,
-                afternoon: 0
+                requiredDaily: 0
             };
         }
 
         if (availableDays === 0) {
             return {
                 availableDays,
-                requiredDaily: null,
-                morning: null,
-                afternoon: null
+                requiredDaily: null
             };
         }
 
-        const requiredDaily = Math.ceil(remaining / availableDays);
-        const morning = Math.floor(requiredDaily / 2);
-
         return {
             availableDays,
-            requiredDaily,
-            morning,
-            afternoon: requiredDaily - morning
+            requiredDaily: Math.ceil(remaining / availableDays)
         };
     }
 
     return Object.freeze({
         MAX_WON,
         MAX_CENTS,
+        ALL_DAYS,
         integer,
         won,
         usd,
@@ -471,6 +514,8 @@ RecoveryLog.Calc = (() => {
         plan,
         effectiveStart,
         tradeDay,
+        hasDelivery,
+        deliveryAmount,
         totals,
         deliveryAverage,
         countWorkDays,
