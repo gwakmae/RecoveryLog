@@ -2,21 +2,29 @@
   "project": "delivery-recovery",
   "schemaVersion": 1,
   "settings": {
-    "lossWon": null,
+    "lossWon": 1200000,
     "plan": {
       "morning": 20000,
       "afternoon": 20000,
       "weekdays": [
+        0,
         1,
         2,
         3,
         4,
-        5
+        5,
+        6
       ],
       "start": "2026-11-14",
       "deadline": null
     }
   },
-  "deliveries": {},
+  "deliveries": {
+    "2026-11-13": {
+      "morning": null,
+      "afternoon": 24211,
+      "note": ""
+    }
+  },
   "trading": {}
 }
