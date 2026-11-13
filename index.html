@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1, viewport-fit=cover"
+    >
+    <meta
+        name="description"
+        content="배달 오전·오후 수익과 트레이딩 손익을 기록하는 회복 프로젝트"
+    >
+    <meta name="theme-color" content="#087c66">
+
+    <title>회복 기록</title>
+
+    <link rel="stylesheet" href="css/style.css">
+
+    <script src="js/calc.js" defer></script>
+    <script src="js/data.js" defer></script>
+    <script src="js/tradeImport.js" defer></script>
+    <script src="js/app.js" defer></script>
+</head>
+<body>
+    <div id="shell">
+        <header class="topbar">
+            <div>
+                <h1>🌱 회복 기록</h1>
+                <p class="subtitle">배달로 쌓고, 목표를 확인하는 기록</p>
+            </div>
+            <span id="save-status" class="badge">브라우저 저장</span>
+        </header>
+
+        <main id="main">
+            <section class="panel">기록을 불러오는 중입니다.</section>
+        </main>
+
+        <noscript>
+            <section class="panel">
+                이 앱을 사용하려면 JavaScript를 활성화해야 합니다.
+            </section>
+        </noscript>
+    </div>
+
+    <nav class="bottom-nav" aria-label="주요 화면">
+        <button type="button" data-view="delivery">
+            <span aria-hidden="true">🛵</span>
+            오늘 배달
+        </button>
+        <button type="button" data-view="month">
+            <span aria-hidden="true">📅</span>
+            월별 기록
+        </button>
+        <button type="button" data-view="plan">
+            <span aria-hidden="true">🎯</span>
+            회복 계획
+        </button>
+        <button type="button" data-view="trading">
+            <span aria-hidden="true">📊</span>
+            트레이딩
+        </button>
+        <button type="button" data-view="settings">
+            <span aria-hidden="true">⚙️</span>
+            설정
+        </button>
+    </nav>
+
+    <div id="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <title>회복 기록 계산 테스트</title>
+
+    <link rel="stylesheet" href="../css/style.css">
+    <script src="../js/calc.js"></script>
+</head>
+<body>
+    <main id="shell">
+        <section class="panel">
+            <h1>계산 테스트</h1>
+            <p class="hint">페이지를 열면 자동으로 실행합니다.</p>
+            <p id="summary"></p>
+            <ol id="results"></ol>
+            <a href="../index.html">앱으로 돌아가기</a>
+        </section>
+    </main>
+
+    <script>
+        "use strict";
+
+        const C = RecoveryLog.Calc;
+        const results = document.getElementById("results");
+
+        let passed = 0;
+        let failed = 0;
+
+        function equal(actual, expected) {
+            if (actual !== expected) {
+                throw new Error(
+                    `예상: ${JSON.stringify(expected)}, 실제: ${JSON.stringify(actual)}`
+                );
+            }
+        }
+
+        function throws(callback) {
+            let thrown = false;
+
+            try {
+                callback();
+            } catch (error) {
+                thrown = true;
+            }
+
+            if (!thrown) {
+                throw new Error("오류가 발생해야 하지만 통과했습니다.");
+            }
+        }
+
+        function test(name, callback) {
+            const item = document.createElement("li");
+
+            try {
+                callback();
+                passed += 1;
+                item.className = "positive";
+                item.textContent = `통과: ${name}`;
+            } catch (error) {
+                failed += 1;
+                item.className = "negative";
+                item.textContent = `실패: ${name} — ${error.message}`;
+            }
+
+            results.appendChild(item);
+        }
+
+        test("배달 빈칸은 미입력 null", () => {
+            equal(C.optionalWon(""), null);
+        });
+
+        test("배달 0원은 숫자 0", () => {
+            equal(C.optionalWon("0"), 0);
+        });
+
+        test("원화 소수는 거부", () => {
+            throws(() => C.requiredWon("100.5"));
+        });
+
+        test("달러 손실을 정수 센트로 변환", () => {
+            equal(C.cents("-12.34"), -1234);
+        });
+
+        test("달러 소수 셋째 자리는 거부", () => {
+            throws(() => C.cents("1.001"));
+        });
+
+        test("존재하지 않는 날짜 거부", () => {
+            throws(() => C.validDate("2030-02-30"));
+        });
+
+        test("트레이딩 손실과 리베이트 각각 원화 환산", () => {
+            const result = C.tradeDay({
+                rate: 1400,
+                rebateCents: 200,
+                positions: [
+                    {
+                        symbol: "XAUUSD",
+                        side: "Buy",
+                        lots: 0.01,
+                        pnlCents: -2000,
+                        ticket: null
+                    }
+                ]
+            });
+
+            equal(result.trading, -28000);
+            equal(result.rebate, 2800);
+            equal(result.total, -25200);
+        });
+
+        test("주 5일, 월요일부터 5회 배달은 금요일 완료", () => {
+            equal(
+                C.finishDate("2030-01-07", 5, [1, 2, 3, 4, 5]),
+                "2030-01-11"
+            );
+        });
+
+        test("주 5일, 월요일부터 6회 배달은 다음 월요일 완료", () => {
+            equal(
+                C.finishDate("2030-01-07", 6, [1, 2, 3, 4, 5]),
+                "2030-01-14"
+            );
+        });
+
+        test("시작일이 토요일이면 다음 월요일부터 계산", () => {
+            equal(
+                C.finishDate("2030-01-05", 1, [1, 2, 3, 4, 5]),
+                "2030-01-07"
+            );
+        });
+
+        test("주 1회 배달의 두 번째 수입일", () => {
+            equal(
+                C.finishDate("2030-01-07", 2, [1]),
+                "2030-01-14"
+            );
+        });
+
+        test("완료일 역산은 시작일과 완료일 모두 포함", () => {
+            equal(
+                C.countWorkDays(
+                    "2030-01-07",
+                    "2030-01-11",
+                    [1, 2, 3, 4, 5]
+                ),
+                5
+            );
+        });
+
+        test("하루 4만 원으로 20만 원은 배달 5일", () => {
+            const result = C.project(
+                200000,
+                40000,
+                "2030-01-07",
+                [1, 2, 3, 4, 5]
+            );
+
+            equal(result.workDays, 5);
+            equal(result.finish, "2030-01-11");
+            equal(result.calendarDays, 5);
+        });
+
+        test("나누어떨어지지 않는 필요 일수는 올림", () => {
+            const result = C.project(
+                200001,
+                40000,
+                "2030-01-07",
+                [1, 2, 3, 4, 5]
+            );
+
+            equal(result.workDays, 6);
+            equal(result.finish, "2030-01-14");
+        });
+
+        test("남은 손실이 0원이면 필요한 배달은 0일", () => {
+            equal(
+                C.project(0, 40000, "2030-01-07", [1, 2, 3]).workDays,
+                0
+            );
+        });
+
+        test("하루 수입 0원은 기간 계산 불가", () => {
+            equal(
+                C.project(100000, 0, "2030-01-07", [1, 2, 3]).workDays,
+                null
+            );
+        });
+
+        test("목표 역산: 20만 원, 배달 5일이면 하루 4만 원", () => {
+            const result = C.reverse(
+                200000,
+                "2030-01-07",
+                "2030-01-11",
+                [1, 2, 3, 4, 5]
+            );
+
+            equal(result.availableDays, 5);
+            equal(result.requiredDaily, 40000);
+            equal(result.morning, 20000);
+            equal(result.afternoon, 20000);
+        });
+
+        test("완료일이 시작일 전이면 배달 가능한 날은 0일", () => {
+            const result = C.reverse(
+                200000,
+                "2030-01-07",
+                "2030-01-06",
+                [1, 2, 3, 4, 5]
+            );
+
+            equal(result.availableDays, 0);
+            equal(result.requiredDaily, null);
+        });
+
+        test("실제 평균은 0원 기록을 포함", () => {
+            const result = C.deliveryAverage({
+                "2020-01-01": {
+                    morning: 20000,
+                    afternoon: 20000
+                },
+                "2020-01-02": {
+                    morning: 0,
+                    afternoon: null
+                }
+            });
+
+            equal(result.days, 2);
+            equal(result.average, 20000);
+        });
+
+        test("배달과 트레이딩 손실을 합산", () => {
+            const state = {
+                deliveries: {
+                    "2020-01-01": {
+                        morning: 20000,
+                        afternoon: 20000
+                    }
+                },
+                trading: {
+                    "2020-01-01": {
+                        rate: 1400,
+                        rebateCents: 0,
+                        positions: [
+                            {
+                                pnlCents: -1000
+                            }
+                        ]
+                    }
+                }
+            };
+
+            const result = C.totals(state);
+
+            equal(result.delivery, 40000);
+            equal(result.trading, -14000);
+            equal(result.recovered, 26000);
+        });
+
+        test("지난 계획 시작일은 기준일의 내일로 이동", () => {
+            equal(
+                C.effectiveStart("2030-01-01", "2030-01-10"),
+                "2030-01-11"
+            );
+        });
+
+        test("미래 계획 시작일은 유지", () => {
+            equal(
+                C.effectiveStart("2030-01-20", "2030-01-10"),
+                "2030-01-20"
+            );
+        });
+
+        document.getElementById("summary").textContent =
+            `통과 ${passed}개 / 실패 ${failed}개`;
+
+        document.getElementById("summary").className =
+            failed ? "negative" : "positive";
+    </script>
+</body>
+</html>

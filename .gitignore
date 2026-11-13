@@ -1,0 +1,23 @@
+# 운영체제 파일
+.DS_Store
+Thumbs.db
+ehthumbs.db
+*.swp
+# IDE/에디터 설정 파일
+.vscode/
+.idea/
+*.sublime-project
+*.idea/workspace.xml
+# 언어/프레임워크 (JavaScript/Frontend 관련)
+node_modules/
+npm-debug.log*
+yarn-error.log*
+# 빌드 산출물 및 의존성
+dist/
+build/
+out/
+*.log
+# 로그 및 임시 파일
+*.tmp
+temp/
+*.bak
