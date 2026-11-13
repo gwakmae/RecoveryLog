@@ -4,7 +4,7 @@
   "settings": {
     "lossWon": 1200000,
     "plan": {
-      "daily": 40000,
+      "daily": 35000,
       "start": "2026-11-14",
       "deadline": null
     }
