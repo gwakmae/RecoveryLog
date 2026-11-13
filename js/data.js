@@ -12,6 +12,10 @@ RecoveryLog.Data = (() => {
 
     let state = null;
     let baseline = null;
+    let pending = emptyPending();
+    let syncState = "local";
+    let syncMessage = "";
+    let syncPromise = null;
 
     function clone(value) {
         return JSON.parse(JSON.stringify(value));
@@ -247,22 +251,219 @@ RecoveryLog.Data = (() => {
         return clean;
     }
 
+    function emptyPending() {
+        return {
+            settings: {},
+            deliveries: {},
+            trading: {}
+        };
+    }
+
+    function hasPending(value = pending) {
+        return Object.keys(value.settings).length > 0 ||
+            Object.keys(value.deliveries).length > 0 ||
+            Object.keys(value.trading).length > 0;
+    }
+
+    function same(left, right) {
+        return JSON.stringify(left) === JSON.stringify(right);
+    }
+
+    function changesBetween(previous, next) {
+        const changes = emptyPending();
+
+        if (!same(previous.settings.lossWon, next.settings.lossWon)) {
+            changes.settings.lossWon = next.settings.lossWon;
+        }
+
+        if (!same(previous.settings.plan, next.settings.plan)) {
+            changes.settings.plan = clone(next.settings.plan);
+        }
+
+        ["deliveries", "trading"].forEach(category => {
+            const dates = new Set([
+                ...Object.keys(previous[category]),
+                ...Object.keys(next[category])
+            ]);
+
+            dates.forEach(date => {
+                const before = previous[category][date];
+                const after = next[category][date];
+
+                if (!same(before, after)) {
+                    changes[category][date] = after === undefined
+                        ? null
+                        : clone(after);
+                }
+            });
+        });
+
+        return changes;
+    }
+
+    function mergePending(previous, changes) {
+        return {
+            settings: {
+                ...previous.settings,
+                ...changes.settings
+            },
+            deliveries: {
+                ...previous.deliveries,
+                ...changes.deliveries
+            },
+            trading: {
+                ...previous.trading,
+                ...changes.trading
+            }
+        };
+    }
+
+    function normalizePending(raw) {
+        object(raw, "미동기 변경분");
+
+        const result = emptyPending();
+        const settings = object(raw.settings, "미동기 설정");
+        const deliveries = object(raw.deliveries, "미동기 수입");
+        const trading = object(raw.trading, "미동기 트레이딩");
+
+        if (Object.prototype.hasOwnProperty.call(settings, "lossWon")) {
+            result.settings.lossWon = storedWon(settings.lossWon, true);
+        }
+
+        if (Object.prototype.hasOwnProperty.call(settings, "plan")) {
+            result.settings.plan = C.plan(
+                object(settings.plan, "미동기 계획")
+            );
+        }
+
+        Object.entries(deliveries).forEach(([date, record]) => {
+            C.recordDate(date);
+
+            result.deliveries[date] = record === null
+                ? null
+                : deliveryRecord(record);
+        });
+
+        Object.entries(trading).forEach(([date, record]) => {
+            C.recordDate(date);
+
+            result.trading[date] = record === null
+                ? null
+                : tradingRecord(record);
+        });
+
+        return result;
+    }
+
+    function applyPending(source, changes) {
+        const next = clone(source);
+
+        if (Object.prototype.hasOwnProperty.call(changes.settings, "lossWon")) {
+            next.settings.lossWon = changes.settings.lossWon;
+        }
+
+        if (Object.prototype.hasOwnProperty.call(changes.settings, "plan")) {
+            next.settings.plan = clone(changes.settings.plan);
+        }
+
+        ["deliveries", "trading"].forEach(category => {
+            Object.entries(changes[category]).forEach(([date, record]) => {
+                if (record === null) {
+                    delete next[category][date];
+                } else {
+                    next[category][date] = clone(record);
+                }
+            });
+        });
+
+        return validate(next);
+    }
+
+    function writeState(next, nextPending) {
+        const clean = validate(next);
+        const cleanPending = normalizePending(nextPending);
+
+        const serialized = JSON.stringify({
+            ...clean,
+            _sync: {
+                version: 1,
+                pending: cleanPending
+            }
+        });
+
+        assertUnchanged();
+
+        try {
+            localStorage.setItem(KEY, serialized);
+        } catch (error) {
+            throw new Error(
+                "브라우저 저장에 실패했습니다. 저장 공간과 권한을 확인하세요. " +
+                "입력은 아직 안전하게 저장되지 않았습니다."
+            );
+        }
+
+        baseline = serialized;
+        state = clean;
+        pending = cleanPending;
+
+        return get();
+    }
+
+    function getSyncState() {
+        return syncState;
+    }
+
+    function getSyncMessage() {
+        return syncMessage;
+    }
+
     function init() {
         try {
             baseline = localStorage.getItem(KEY);
         } catch (error) {
-            throw new Error("브라우저 저장소에 접근할 수 없습니다. 사이트 저장 권한을 확인하세요.");
+            throw new Error(
+                "브라우저 저장소에 접근할 수 없습니다. 사이트 저장 권한을 확인하세요."
+            );
         }
 
         if (baseline === null) {
             state = empty();
+            pending = emptyPending();
+            syncState = "local";
+            syncMessage = "아직 저장된 기록이 없습니다.";
+
             return get();
         }
 
         try {
-            state = validate(JSON.parse(baseline));
+            const parsed = JSON.parse(baseline);
+            const clean = validate(parsed);
+
+            let restoredPending;
+
+            if (parsed._sync !== undefined) {
+                object(parsed._sync, "동기화 정보");
+
+                if (parsed._sync.version !== 1) {
+                    throw new Error("지원하지 않는 동기화 정보 버전입니다.");
+                }
+
+                restoredPending = normalizePending(parsed._sync.pending);
+            } else {
+                restoredPending = changesBetween(empty(), clean);
+            }
+
+            state = applyPending(clean, restoredPending);
+            pending = restoredPending;
+
+            syncState = hasPending() ? "pending" : "local";
+            syncMessage = hasPending()
+                ? "이 기기의 변경분을 GitHub에 반영해야 합니다."
+                : "GitHub 최신 기록을 확인하기 전입니다.";
         } catch (error) {
-            throw new Error("기존 저장 데이터를 읽지 못했습니다. " + error.message);
+            throw new Error(
+                "기존 저장 데이터를 읽지 못했습니다. " + error.message
+            );
         }
 
         return get();
@@ -296,22 +497,18 @@ RecoveryLog.Data = (() => {
 
     function replace(next) {
         const clean = validate(next);
-        const serialized = JSON.stringify(clean);
+        const previous = state ? clone(state) : empty();
+        const changes = changesBetween(previous, clean);
+        const nextPending = mergePending(pending, changes);
 
-        assertUnchanged();
+        const result = writeState(clean, nextPending);
 
-        try {
-            localStorage.setItem(KEY, serialized);
-        } catch (error) {
-            throw new Error(
-                "브라우저 저장에 실패했습니다. 저장 공간과 권한을 확인하세요. 입력은 아직 저장되지 않았습니다."
-            );
-        }
+        syncState = hasPending() ? "pending" : syncState;
+        syncMessage = hasPending()
+            ? "브라우저에 저장했습니다. GitHub 반영을 기다립니다."
+            : syncMessage;
 
-        baseline = serialized;
-        state = clean;
-
-        return get();
+        return result;
     }
 
     function update(mutator) {
@@ -417,22 +614,48 @@ RecoveryLog.Data = (() => {
     }
 
     function githubConfig() {
+        const fallback = {
+            owner: "",
+            repo: "",
+            branch: "main",
+            sha: null
+        };
+
+        const match = location.hostname.match(/^([^.]+)\.github\.io$/);
+
+        if (match) {
+            const owner = match[1];
+            const firstSegment = location.pathname
+                .split("/")
+                .filter(Boolean)[0];
+
+            fallback.owner = owner;
+            fallback.repo =
+                firstSegment && !firstSegment.includes(".")
+                    ? firstSegment
+                    : owner + ".github.io";
+        }
+
         try {
-            const saved = JSON.parse(localStorage.getItem(GITHUB_KEY) || "null");
+            const saved = JSON.parse(
+                localStorage.getItem(GITHUB_KEY) || "null"
+            );
 
             if (saved && typeof saved === "object") {
                 return {
                     owner: String(saved.owner || ""),
                     repo: String(saved.repo || ""),
                     branch: String(saved.branch || "main"),
-                    sha: typeof saved.sha === "string" ? saved.sha : null
+                    sha: typeof saved.sha === "string"
+                        ? saved.sha
+                        : null
                 };
             }
         } catch (error) {
             console.warn("GitHub 연결 정보를 읽지 못했습니다.", error);
         }
 
-        return { owner: "", repo: "", branch: "main", sha: null };
+        return fallback;
     }
 
     function getToken() {
@@ -471,6 +694,9 @@ RecoveryLog.Data = (() => {
         }
 
         localStorage.setItem(GITHUB_KEY, JSON.stringify(next));
+
+        syncState = hasPending() ? "pending" : "local";
+        syncMessage = "GitHub 연결 정보를 저장했습니다. 최신 기록을 확인합니다.";
     }
 
     function connection() {
@@ -488,9 +714,10 @@ RecoveryLog.Data = (() => {
 
         if (current.owner !== expected.owner ||
             current.repo !== expected.repo ||
-            current.branch !== expected.branch ||
-            current.sha !== expected.sha) {
-            throw new Error("다른 작업에서 GitHub 연결 상태가 변경되었습니다. 다시 시도하세요.");
+            current.branch !== expected.branch) {
+            throw new Error(
+                "다른 작업에서 GitHub 연결 대상이 변경되었습니다. 다시 시도하세요."
+            );
         }
     }
 
@@ -565,115 +792,214 @@ RecoveryLog.Data = (() => {
         return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
     }
 
-    async function pullGithub() {
-        const config = connection();
-        const expected = baseline;
-        const file = await remoteFile(config);
+    function assertSnapshot(expected) {
+        assertUnchanged(expected);
 
-        if (!file) {
+        if (baseline !== expected) {
             throw new Error(
-                "원격 데이터 파일이 없거나 접근할 수 없습니다. 저장소·브랜치·권한을 확인하세요."
+                "동기화 도중 이 기기의 기록이 변경되었습니다. " +
+                "변경분은 유지됩니다. 다시 동기화하세요."
             );
         }
-
-        const remote = validate(JSON.parse(decodeBase64(file.content)));
-
-        assertUnchanged(expected);
-        assertConnection(config);
-
-        replace(remote);
-
-        localStorage.setItem(GITHUB_KEY, JSON.stringify({
-            ...config,
-            sha: file.sha
-        }));
-
-        return get();
     }
 
-    async function pushGithub() {
-        const config = connection();
+    function rememberRemote(config, sha) {
+        try {
+            assertConnection(config);
 
-        if (!getToken()) {
-            throw new Error("업로드하려면 토큰을 저장하세요.");
+            localStorage.setItem(GITHUB_KEY, JSON.stringify({
+                owner: config.owner,
+                repo: config.repo,
+                branch: config.branch,
+                sha
+            }));
+        } catch (error) {
+            console.warn("원격 버전 정보를 별도로 저장하지 못했습니다.", error);
         }
+    }
 
-        const expected = baseline;
-        const snapshot = get();
-        const file = await remoteFile(config);
+    async function performSync() {
+        syncState = "syncing";
+        syncMessage = "GitHub 최신 기록과 이 기기의 변경분을 확인하고 있습니다.";
 
-        assertUnchanged(expected);
-        assertConnection(config);
+        try {
+            const config = connection();
+            const tokenAtStart = getToken();
 
-        if (file && file.sha !== config.sha) {
-            throw new Error(
-                "원격 기록이 변경되었거나 아직 불러오지 않았습니다. " +
-                "로컬 JSON을 백업하고 원격 기록을 먼저 확인하세요. 자동 덮어쓰지 않았습니다."
-            );
-        }
+            for (let attempt = 0; attempt < 3; attempt += 1) {
+                const expected = baseline;
+                const snapshot = clone(pending);
+                const file = await remoteFile(config);
 
-        if (!file && config.sha) {
-            throw new Error(
-                "이전에 확인한 원격 파일이 사라졌거나 접근할 수 없습니다. 연결 상태를 확인하세요."
-            );
-        }
+                assertSnapshot(expected);
+                assertConnection(config);
 
-        const body = {
-            message: "data: 배달 중심 회복 기록 업데이트",
-            branch: config.branch,
-            content: encodeBase64(JSON.stringify(snapshot, null, 2) + "\n")
-        };
+                const remote = file
+                    ? validate(JSON.parse(decodeBase64(file.content)))
+                    : empty();
 
-        if (file) {
-            body.sha = file.sha;
-        }
+                const merged = applyPending(remote, snapshot);
 
-        const response = await fetchJson(apiUrl(config), {
-            method: "PUT",
-            headers: {
-                ...headers(),
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify(body)
-        });
+                if (!hasPending(snapshot)) {
+                    if (!file) {
+                        syncState = "local";
+                        syncMessage =
+                            "원격 데이터 파일이 아직 없거나 접근할 수 없습니다.";
 
-        const result = await response.json().catch(() => ({}));
+                        return {
+                            ok: false,
+                            reason:
+                                "GitHub 데이터 파일이 아직 없거나 접근할 수 없습니다. " +
+                                "연결 정보와 권한을 확인하세요. 새 프로젝트라면 첫 저장 후 생성합니다."
+                        };
+                    }
 
-        if (!response.ok) {
-            if (response.status === 409 || response.status === 422) {
-                throw new Error(
-                    "원격 버전 충돌 또는 업로드 조건 오류입니다. " +
-                    "로컬 기록은 유지됩니다. 원격 상태를 확인하세요."
-                );
+                    writeState(merged, emptyPending());
+                    rememberRemote(config, file.sha);
+
+                    syncState = "ok";
+                    syncMessage = "GitHub 최신 기록을 불러왔습니다.";
+
+                    return { ok: true, uploaded: false };
+                }
+
+                if (!tokenAtStart) {
+                    writeState(merged, snapshot);
+
+                    if (file) {
+                        rememberRemote(config, file.sha);
+                    }
+
+                    syncState = "pending";
+                    syncMessage =
+                        "토큰이 없어 변경분을 이 기기에 보관하고 있습니다.";
+
+                    return {
+                        ok: false,
+                        reason:
+                            "GitHub 토큰이 없어 업로드하지 못했습니다. " +
+                            "설정에서 토큰을 저장하면 다시 시도합니다."
+                    };
+                }
+
+                if (getToken() !== tokenAtStart) {
+                    throw new Error(
+                        "작업 중 GitHub 토큰이 변경되었습니다. 다시 동기화하세요."
+                    );
+                }
+
+                const body = {
+                    message: "data: 회복 기록 자동 동기화",
+                    branch: config.branch,
+                    content: encodeBase64(
+                        JSON.stringify(merged, null, 2) + "\n"
+                    )
+                };
+
+                if (file) {
+                    body.sha = file.sha;
+                }
+
+                const response = await fetchJson(apiUrl(config), {
+                    method: "PUT",
+                    headers: {
+                        ...headers(),
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify(body)
+                });
+
+                const result = await response.json().catch(() => ({}));
+
+                if (response.status === 409 ||
+                    response.status === 422) {
+                    if (attempt < 2) {
+                        await new Promise(resolve => {
+                            window.setTimeout(resolve, 400 * (attempt + 1));
+                        });
+
+                        continue;
+                    }
+
+                    throw new Error(
+                        "원격 버전 충돌 또는 업로드 조건 오류가 계속 발생했습니다. " +
+                        "이 기기의 변경분은 남겨두었습니다. 다시 시도하세요."
+                    );
+                }
+
+                if (!response.ok) {
+                    throw new Error(
+                        result.message ||
+                        `GitHub 업로드 실패 (${response.status})`
+                    );
+                }
+
+                if (!result.content ||
+                    typeof result.content.sha !== "string") {
+                    throw new Error(
+                        "업로드 결과의 파일 버전을 확인하지 못했습니다. " +
+                        "변경분을 보존했으니 다시 동기화하세요."
+                    );
+                }
+
+                assertConnection(config);
+                assertSnapshot(expected);
+
+                writeState(merged, emptyPending());
+                rememberRemote(config, result.content.sha);
+
+                syncState = "ok";
+                syncMessage = "현재 변경분이 GitHub에도 반영되었습니다.";
+
+                return { ok: true, uploaded: true };
             }
 
             throw new Error(
-                result.message || `GitHub 업로드 실패 (${response.status})`
+                "동기화를 완료하지 못했습니다. 변경분은 이 기기에 유지됩니다."
             );
+        } catch (error) {
+            syncState = hasPending() ? "pending" : "error";
+            syncMessage = error.message || "GitHub 동기화에 실패했습니다.";
+
+            return {
+                ok: false,
+                reason: syncMessage
+            };
+        }
+    }
+
+    function sync() {
+        if (syncPromise) {
+            return syncPromise;
         }
 
-        if (!result.content || typeof result.content.sha !== "string") {
-            throw new Error("업로드 응답의 파일 버전을 확인하지 못했습니다.");
-        }
+        syncPromise = performSync().finally(() => {
+            syncPromise = null;
+        });
 
-        assertConnection(config);
+        return syncPromise;
+    }
 
-        localStorage.setItem(GITHUB_KEY, JSON.stringify({
-            ...config,
-            sha: result.content.sha
-        }));
+    function load() {
+        return sync();
+    }
 
-        if (localStorage.getItem(KEY) !== expected) {
-            throw new Error(
-                "업로드는 완료됐지만 작업 중 다른 탭에서 로컬 기록이 바뀌었습니다. " +
-                "현재 로컬 기록은 덮어쓰지 않았습니다. 새로고침 후 확인하세요."
-            );
-        }
+    function pullGithub() {
+        return sync();
+    }
+
+    function pushGithub() {
+        return sync();
     }
 
     return Object.freeze({
         KEY,
         init,
+        load,
+        sync,
+        hasPending,
+        getSyncState,
+        getSyncMessage,
         get,
         raw,
         validate,

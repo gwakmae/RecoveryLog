@@ -58,7 +58,63 @@ RecoveryLog.App = (() => {
 
     function markSaved() {
         dirty = false;
-        document.getElementById("save-status").textContent = "브라우저 저장";
+        renderSyncBadge();
+    }
+
+    function renderSyncBadge() {
+        const badge = document.getElementById("save-status");
+
+        if (dirty) {
+            badge.textContent = "입력 중 · 저장 필요";
+            badge.title = "현재 입력은 아직 저장하지 않았습니다.";
+            return;
+        }
+
+        const status = D.getSyncState();
+
+        const labels = {
+            local: "브라우저 준비됨",
+            syncing: "GitHub 동기화 중",
+            ok: "GitHub 동기화됨",
+            pending: "이 기기에만 저장",
+            error: "동기화 실패 · 로컬 유지"
+        };
+
+        badge.textContent = labels[status] || "브라우저 저장";
+        badge.title = D.getSyncMessage() || "";
+    }
+
+    function notifySync(result, savedMessage = "") {
+        renderSyncBadge();
+
+        if (result.ok) {
+            toast(
+                savedMessage
+                    ? savedMessage + " GitHub에도 반영했습니다."
+                    : "GitHub 최신 기록을 반영했습니다."
+            );
+        } else {
+            toast(
+                (savedMessage ? savedMessage + "\n" : "") +
+                "이 기기의 기록은 유지됩니다.\n" +
+                result.reason
+            );
+        }
+    }
+
+    async function saveAndSync(savedMessage) {
+        render();
+
+        const request = D.sync();
+
+        renderSyncBadge();
+
+        const result = await request;
+
+        render();
+        notifySync(result, savedMessage);
+
+        return result;
     }
 
     async function run(task) {
@@ -67,6 +123,7 @@ RecoveryLog.App = (() => {
         }
 
         busy = true;
+        main.inert = true;
 
         const controls = Array.from(
             document.querySelectorAll("button, input, select, textarea")
@@ -87,7 +144,9 @@ RecoveryLog.App = (() => {
                 }
             });
 
+            main.inert = false;
             busy = false;
+            renderSyncBadge();
         }
     }
 
@@ -802,10 +861,10 @@ RecoveryLog.App = (() => {
                 "</label>" +
             "</section>" +
             '<details class="panel">' +
-                "<summary>GitHub 수동 동기화 · 선택</summary>" +
-                '<p class="hint">새 파일 data/recovery-log.json을 사용합니다. ' +
-                    "자동 병합하지 않으며 원격 버전이 달라지면 업로드를 중단합니다. " +
-                    "공개 저장소에 올린 기록은 공개될 수 있습니다.</p>" +
+                "<summary>GitHub 자동 동기화 설정</summary>" +
+                '<p class="hint">수입·트레이딩·설정·목표를 저장하면 GitHub에도 자동 반영합니다. ' +
+                    "실패한 변경분은 이 기기에 남겨 다음에 다시 시도합니다. " +
+                    "원격 파일은 data/recovery-log.json입니다.</p>" +
                 '<form id="github-form" class="stack">' +
                     '<label class="field"><span>소유자</span>' +
                         `<input name="owner" value="${e(github.owner)}" autocomplete="off"></label>` +
@@ -816,15 +875,19 @@ RecoveryLog.App = (() => {
                     '<label class="field"><span>토큰 · 현재 탭의 세션에만 저장</span>' +
                         '<input name="token" type="password" autocomplete="off" ' +
                             `value="${e(D.getToken())}"></label>` +
-                    '<p class="hint">쓰기는 해당 저장소의 Contents 읽기·쓰기 권한이 필요합니다. ' +
-                        "토큰은 JSON 백업에 포함되지 않습니다.</p>" +
+                    '<p class="hint">해당 저장소의 Contents 읽기·쓰기 권한이 필요합니다. ' +
+                        "토큰은 JSON 백업에 포함되지 않습니다. " +
+                        "탭을 닫으면 다시 입력해야 할 수 있습니다.</p>" +
                     '<div class="actions"><button class="button secondary" type="submit">' +
-                        "연결 정보 저장</button></div>" +
+                        "연결 정보 저장 · 동기화</button></div>" +
                 "</form>" +
                 '<div class="actions">' +
-                    '<button class="button secondary" data-action="github-pull">원격 불러오기</button>' +
-                    '<button class="button" data-action="github-push">원격 업로드</button>' +
+                    '<button class="button" data-action="github-push">동기화 재시도</button>' +
+                    '<button class="button secondary" data-action="github-pull">최신 기록 확인</button>' +
                 "</div>" +
+                '<p class="hint">공개 저장소의 기록은 공개될 수 있습니다. ' +
+                    "동일 날짜를 여러 기기에서 수정하면 나중에 동기화한 변경이 적용됩니다. " +
+                    "저장소를 바꾸기 전에는 JSON 백업을 보관하세요.</p>" +
             "</details>" +
             '<section class="panel">' +
                 "<h2>기록 기준</h2>" +
@@ -923,8 +986,7 @@ RecoveryLog.App = (() => {
             }
 
             D.saveDelivery(selectedDate, record);
-            render();
-            toast("수입을 저장했습니다.");
+            await saveAndSync("수입을 이 기기에 저장했습니다.");
         } else if (form.id === "trading-form") {
             const record = readTrading();
 
@@ -933,8 +995,7 @@ RecoveryLog.App = (() => {
             }
 
             D.saveTrading(selectedDate, record);
-            render();
-            toast("트레이딩과 적용 환율을 저장했습니다.");
+            await saveAndSync("트레이딩과 적용 환율을 이 기기에 저장했습니다.");
         } else if (form.id === "plan-form") {
             const plan = readPlan(form);
 
@@ -942,8 +1003,7 @@ RecoveryLog.App = (() => {
                 state.settings.plan = plan;
             });
 
-            render();
-            toast("하루 목표를 저장했습니다. 주 7일 기준으로 계산합니다.");
+            await saveAndSync("하루 배달 목표를 이 기기에 저장했습니다.");
         } else if (form.id === "settings-form") {
             const loss = C.requiredWon(form.elements.loss.value);
             const current = D.get().settings.lossWon;
@@ -958,18 +1018,46 @@ RecoveryLog.App = (() => {
                 state.settings.lossWon = loss;
             });
 
-            render();
-            toast("시작 손실을 저장했습니다.");
+            await saveAndSync("시작 손실을 이 기기에 저장했습니다.");
         } else if (form.id === "github-form") {
-            D.configureGithub({
+            const nextConfig = {
                 owner: form.elements.owner.value.trim(),
                 repo: form.elements.repo.value.trim(),
                 branch: form.elements.branch.value.trim()
-            }, form.elements.token.value.trim());
+            };
+
+            const previous = D.githubConfig();
+
+            const changed =
+                previous.owner !== nextConfig.owner ||
+                previous.repo !== nextConfig.repo ||
+                previous.branch !== nextConfig.branch;
+
+            if (changed && previous.owner && previous.repo &&
+                !window.confirm(
+                    "GitHub 연결 대상을 변경합니다.\n" +
+                    "새 대상의 기록과 이 기기의 미동기 변경분을 합칩니다.\n" +
+                    "현재 기록을 JSON으로 백업한 뒤 변경하는 것을 권장합니다. 계속할까요?"
+                )) {
+                return;
+            }
+
+            D.configureGithub(
+                nextConfig,
+                form.elements.token.value.trim()
+            );
 
             dirty = false;
             render();
-            toast("GitHub 연결 정보를 저장했습니다.");
+
+            const request = D.load();
+
+            renderSyncBadge();
+
+            const result = await request;
+
+            render();
+            notifySync(result, "연결 정보를 저장했습니다.");
         }
     }
 
@@ -985,14 +1073,12 @@ RecoveryLog.App = (() => {
                 "이 날짜의 배달과 그 외 수입을 삭제할까요? 트레이딩은 유지됩니다."
             )) {
                 D.saveDelivery(selectedDate, null);
-                render();
-                toast("이 날짜의 수입 기록을 삭제했습니다.");
+                await saveAndSync("이 날짜의 수입 기록을 이 기기에서 삭제했습니다.");
             }
         } else if (name === "delete-trading") {
             if (window.confirm("이 날짜의 트레이딩 기록만 삭제할까요? 배달은 유지됩니다.")) {
                 D.saveTrading(selectedDate, null);
-                render();
-                toast("트레이딩 기록을 삭제했습니다.");
+                await saveAndSync("이 날짜의 트레이딩을 이 기기에서 삭제했습니다.");
             }
         } else if (name === "add-position") {
             const rows = document.getElementById("position-rows");
@@ -1038,8 +1124,7 @@ RecoveryLog.App = (() => {
 
             if (window.confirm("저장된 모든 날짜의 해당 종목명을 변경할까요?")) {
                 D.renameSymbol(from, to);
-                render();
-                toast("저장된 종목명을 변경했습니다.");
+                await saveAndSync("저장된 종목명을 이 기기에서 변경했습니다.");
             }
         } else if (name === "copy-prompt") {
             const prompt = T.makePrompt(selectedDate);
@@ -1137,20 +1222,15 @@ RecoveryLog.App = (() => {
             );
 
             toast("백업 파일을 다운로드했습니다.");
-        } else if (name === "github-pull") {
-            if (!window.confirm(
-                "원격 기록으로 현재 로컬 기록 전체를 교체합니다.\n" +
-                "JSON 백업을 먼저 보관했나요? 계속할까요?"
-            )) {
-                return;
-            }
+        } else if (name === "github-pull" || name === "github-push") {
+            const request = D.sync();
 
-            await D.pullGithub();
+            renderSyncBadge();
+
+            const result = await request;
+
             render();
-            toast("원격 기록을 불러왔습니다.");
-        } else if (name === "github-push") {
-            await D.pushGithub();
-            toast("현재 기록을 GitHub에 업로드했습니다.");
+            notifySync(result);
         } else if (name === "export-raw") {
             download(D.raw(), `recovery-log-original-${Date.now()}.txt`, "text/plain");
         }
@@ -1198,8 +1278,7 @@ RecoveryLog.App = (() => {
                     state.settings.plan.daily = daily;
                 });
 
-                render();
-                toast("하루 배달 목표로 선택했습니다.");
+                await saveAndSync("하루 배달 목표로 선택해 이 기기에 저장했습니다.");
             });
 
             return;
@@ -1308,8 +1387,7 @@ RecoveryLog.App = (() => {
                 D.replace(restored);
                 ready = true;
                 view = "settings";
-                render();
-                toast("백업을 복원했습니다.");
+                await saveAndSync("백업을 이 기기에 복원했습니다.");
             });
         }
     });
@@ -1328,27 +1406,46 @@ RecoveryLog.App = (() => {
         }
     });
 
-    try {
-        D.init();
-        ready = true;
-        render();
-    } catch (error) {
-        console.error(error);
+    async function initialize() {
+        await run(async () => {
+            try {
+                D.init();
+                ready = true;
+                render();
 
-        main.innerHTML =
-            '<section class="panel">' +
-                "<h2>저장 데이터를 확인해야 합니다</h2>" +
-                `<p class="negative">${e(error.message)}</p>` +
-                '<p class="hint">기존 저장값을 자동으로 지우지 않았습니다. ' +
-                    "원본을 내려받거나 정상 백업을 복원하세요. " +
-                    "브라우저 저장이 차단되어 있다면 먼저 허용해야 합니다.</p>" +
-                '<div class="actions"><button class="button secondary" ' +
-                    'data-action="export-raw">기존 저장 원본 다운로드</button></div>' +
-                '<label class="field" style="margin-top:16px"><span>정상 백업 복원</span>' +
-                    '<input id="backup-file" type="file" accept=".json,application/json">' +
-                "</label>" +
-            "</section>";
+                const request = D.load();
+
+                renderSyncBadge();
+
+                const result = await request;
+
+                render();
+
+                if (!result.ok) {
+                    toast(result.reason);
+                }
+            } catch (error) {
+                console.error(error);
+                ready = false;
+
+                main.innerHTML =
+                    '<section class="panel">' +
+                        "<h2>저장 데이터를 확인해야 합니다</h2>" +
+                        `<p class="negative">${e(error.message)}</p>` +
+                        '<p class="hint">기존 저장값을 자동으로 지우지 않았습니다. ' +
+                            "원본을 내려받거나 정상 백업을 복원하세요. " +
+                            "브라우저 저장이 차단되어 있다면 먼저 허용해야 합니다.</p>" +
+                        '<div class="actions"><button class="button secondary" ' +
+                            'data-action="export-raw">기존 저장 원본 다운로드</button></div>' +
+                        '<label class="field" style="margin-top:16px"><span>정상 백업 복원</span>' +
+                            '<input id="backup-file" type="file" accept=".json,application/json">' +
+                        "</label>" +
+                    "</section>";
+            }
+        });
     }
+
+    initialize();
 
     return Object.freeze({ toast });
 })();
