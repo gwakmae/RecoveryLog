@@ -660,10 +660,38 @@ RecoveryLog.Data = (() => {
 
     function getToken() {
         try {
-            return sessionStorage.getItem(TOKEN_KEY) || "";
+            const saved = localStorage.getItem(TOKEN_KEY);
+
+            if (saved) {
+                return saved;
+            }
+        } catch (error) {
+            console.warn("브라우저에 저장된 토큰을 읽지 못했습니다.", error);
+        }
+
+        let legacyToken = "";
+
+        try {
+            legacyToken = sessionStorage.getItem(TOKEN_KEY) || "";
         } catch (error) {
             return "";
         }
+
+        if (!legacyToken) {
+            return "";
+        }
+
+        try {
+            localStorage.setItem(TOKEN_KEY, legacyToken);
+            sessionStorage.removeItem(TOKEN_KEY);
+        } catch (error) {
+            console.warn(
+                "기존 세션 토큰의 지속 보관에 실패했습니다. 현재 세션에서는 계속 사용합니다.",
+                error
+            );
+        }
+
+        return legacyToken;
     }
 
     function configureGithub(config, token) {
@@ -687,10 +715,28 @@ RecoveryLog.Data = (() => {
             sha: same ? previous.sha : null
         };
 
-        if (token) {
-            sessionStorage.setItem(TOKEN_KEY, token);
-        } else {
+        const normalizedToken = String(token || "").trim();
+
+        try {
+            if (normalizedToken) {
+                localStorage.setItem(TOKEN_KEY, normalizedToken);
+            } else {
+                localStorage.removeItem(TOKEN_KEY);
+            }
+        } catch (error) {
+            throw new Error(
+                "토큰을 브라우저에 저장하거나 삭제하지 못했습니다. " +
+                "사이트 저장 권한을 확인하세요."
+            );
+        }
+
+        try {
             sessionStorage.removeItem(TOKEN_KEY);
+        } catch (error) {
+            throw new Error(
+                "기존 세션 토큰을 정리하지 못했습니다. " +
+                "탭을 닫고 다시 연 뒤 연결 정보를 저장하세요."
+            );
         }
 
         localStorage.setItem(GITHUB_KEY, JSON.stringify(next));

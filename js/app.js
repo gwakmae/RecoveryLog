@@ -872,12 +872,14 @@ RecoveryLog.App = (() => {
                         `<input name="repo" value="${e(github.repo)}" autocomplete="off"></label>` +
                     '<label class="field"><span>브랜치</span>' +
                         `<input name="branch" value="${e(github.branch)}" autocomplete="off"></label>` +
-                    '<label class="field"><span>토큰 · 현재 탭의 세션에만 저장</span>' +
+                    '<label class="field"><span>토큰 · 이 브라우저에 저장</span>' +
                         '<input name="token" type="password" autocomplete="off" ' +
                             `value="${e(D.getToken())}"></label>` +
                     '<p class="hint">해당 저장소의 Contents 읽기·쓰기 권한이 필요합니다. ' +
-                        "토큰은 JSON 백업에 포함되지 않습니다. " +
-                        "탭을 닫으면 다시 입력해야 할 수 있습니다.</p>" +
+                        "토큰은 이 브라우저에 보관하며 앱을 다시 열어도 사용합니다. " +
+                        "JSON 백업이나 GitHub 기록 파일에는 포함되지 않습니다. " +
+                        "개인 기기에서만 사용하세요. " +
+                        "토큰을 삭제하려면 입력칸을 비우고 연결 정보를 저장하세요.</p>" +
                     '<div class="actions"><button class="button secondary" type="submit">' +
                         "연결 정보 저장 · 동기화</button></div>" +
                 "</form>" +
