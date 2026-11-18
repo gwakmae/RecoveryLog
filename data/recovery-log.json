@@ -49,6 +49,14 @@
       "combined": null,
       "other": 97160,
       "note": "쿠팡 Fullfillment"
+    },
+    "2026-11-18": {
+      "mode": "combined",
+      "coupang": null,
+      "baemin": null,
+      "combined": 41615,
+      "other": null,
+      "note": ""
     }
   },
   "trading": {}
